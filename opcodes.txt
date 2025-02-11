@@ -1,0 +1,11 @@
+Name = instOpCode = ALUOpCode(if present)
+Rtype = 6b0
+beq = 6b1
+bne = 6b2
+sw = 6b3
+lw = 6b4
+addi = 6b5
+andi = 6b6
+ori = 6b7
+slti = 6b8
+jump(j) = 6b9
