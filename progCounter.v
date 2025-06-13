@@ -6,6 +6,10 @@ module progCounterRegWrite(
     output reg [31:0] instAddress_out
 );
 
+initial begin
+    instAddress_out = 32'b0;
+end
+
 // Reset and initialization
 always @(posedge clk or posedge reset) begin
     if (reset) begin

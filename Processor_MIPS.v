@@ -8,7 +8,7 @@
 `include "InstMem.v"
 `include "JumpAddressGeneration.v"
 `include "leftShift2Bit.v"
-`include "Mem_WB_register.v"
+`include "MEM_WB_register.v"
 `include "Memory_MIPS.v"
 `include "mux2.v"
 `include "progCounter.v"
@@ -22,7 +22,6 @@ module Processor_MIPS(
     input reset
 );
 
-////////////////////////////////////////////////////////////
 // Wires for pipeline stages
 wire [31:0] instrWireID, nextPCID;
 wire [31:0] instrWireEX, nextPCEX, readData1EX, readData2EX, NPC1EX, outSignEXTEX;
@@ -33,8 +32,10 @@ wire ZeroOutMEM;
 wire [31:0] instrWireWB, ALUResultWB, outputDataWB;
 wire [4:0] writeRegWireWB;
 
-////////////////////////////////////////////////////////////
 // Control signals for pipeline stages
+wire [2:0] ALUOp;
+wire [3:0] ALUControlID;
+wire RegDest, RegWrite, ALUSrc, MemRead, MemWrite, MemToReg, Branch, Jump;
 wire RegDestEX, RegWriteEX, ALUSrcEX, MemReadEX, MemWriteEX, MemToRegEX, BranchEX, JumpEX;
 wire [3:0] ALUCtrlEX;
 wire RegDestMEM, RegWriteMEM, ALUSrcMEM, MemReadMEM, MemWriteMEM, MemToRegMEM, BranchMEM, JumpMEM;
@@ -42,12 +43,16 @@ wire [3:0] ALUCtrlMEM;
 wire RegDestWB, RegWriteWB, ALUSrcWB, MemReadWB, MemWriteWB, MemToRegWB, BranchWB, JumpWB;
 wire [3:0] ALUCtrlWB;
 
-////////////////////////////////////////////////////////////
 // Hazard and stall control signals
 wire dataStall;
 wire controlStall;
 
-////////////////////////////////////////////////////////////
+wire [31:0] ALUResult, nextPCBranch, outSignEXT, NPC1, outputData, ALUInput2;
+wire ZeroOut;
+
+assign nextPCBranch = 32'b0;
+assign NPC1 = 32'b0;
+
 // Instruction Fetch (IF) stage
 wire [31:0] PC;
 wire [31:0] nextPC;
@@ -67,7 +72,6 @@ addr32bit u4(
     .out_addr(nextPC)
 );
 
-////////////////////////////////////////////////////////////
 // Stall and hazard control
 stallUnit u90(
     .clk(clk),
@@ -104,7 +108,6 @@ nopSet u91(
     .NewD(instrWireIDhazard)
 );
 
-////////////////////////////////////////////////////////////
 // Instruction Decode (ID) stage
 controlUnit u1(
     .clk(clk),
@@ -112,7 +115,7 @@ controlUnit u1(
     .InstOpCode(instrWireIDhazard[31:26]),
     .ALUOperation(instrWireIDhazard[5:0]),
     .IR(instrWireIDhazard),
-    .ALUOpCode(ALUCtrlEX),
+    .ALUOpCode(ALUOp),
     .regDestFlag(RegDest),
     .regWriteFlag(RegWrite),
     .ALUSrcFlag(ALUSrc),
@@ -123,38 +126,52 @@ controlUnit u1(
     .JumpFlag(Jump)
 );
 
+ALUControl aluControlID(
+    .ALUOperation(instrWireIDhazard[5:0]),
+    .ALUOpcode(ALUOp),
+    .ALUOutputSignal(ALUControlID)
+);
+
+valueExtender immediateExtender(
+    .inpData(instrWireIDhazard[15:0]),
+    .outData(outSignEXT)
+);
+
 wire [4:0] writeRegWire;
 
-mux2 u10A(RegDest, instrWireID[16], instrWireID[11], writeRegWire[0]);
-mux2 u10B(RegDest, instrWireID[17], instrWireID[12], writeRegWire[1]);
-mux2 u10C(RegDest, instrWireID[18], instrWireID[13], writeRegWire[2]);
-mux2 u10D(RegDest, instrWireID[19], instrWireID[14], writeRegWire[3]);
-mux2 u10E(RegDest, instrWireID[20], instrWireID[15], writeRegWire[4]);
+// mux2 u10A(RegDest, instrWireID[16], instrWireID[11], writeRegWire[0]);
+// mux2 u10B(RegDest, instrWireID[17], instrWireID[12], writeRegWire[1]);
+// mux2 u10C(RegDest, instrWireID[18], instrWireID[13], writeRegWire[2]);
+// mux2 u10D(RegDest, instrWireID[19], instrWireID[14], writeRegWire[3]);
+// mux2 u10E(RegDest, instrWireID[20], instrWireID[15], writeRegWire[4]);
+
+assign writeRegWire = RegDest ? instrWireIDhazard[15:11] : instrWireIDhazard[20:16];
 
 wire [31:0] readData1, readData2;
 wire [31:0] WBData;
 
+assign WBData = MemToRegWB ? outputDataWB : ALUResultWB;
+
 regFile u11(
     .clk(clk),
     .regWriteControl(RegWriteWB),
-    .readRegAddress1(instrWireID[25:21]),
-    .readRegAddress2(instrWireID[20:16]),
+    .readRegAddress1(instrWireIDhazard[25:21]),
+    .readRegAddress2(instrWireIDhazard[20:16]),
     .writeRegAddress(writeRegWireWB),
     .writeRegData(WBData),
     .readData1(readData1),
     .readData2(readData2)
 );
 
-////////////////////////////////////////////////////////////
 // Program Counter Update
 progCounterRegWrite u9(
     .clk(clk),
     .reset(reset),
     .instAddress_in(nextPC),
+    .controlPC(1'b1),
     .instAddress_out(PC)
 );
 
-////////////////////////////////////////////////////////////
 // Pipeline Registers
 IF_ID_register p1(
     .clk(clk),
@@ -177,8 +194,8 @@ ID_EX_register p2(
     .MemToRegInput(MemToReg),
     .BranchFlagInput(Branch),
     .JumpFlagInput(Jump),
-    .ALUControlInput(ALUOp),
-    .IRInput(instrWireID),
+    .ALUControlInput(ALUControlID),
+    .IRInput(instrWireIDhazard),
     .PCInput(nextPCID),
     .ARegisterInput(readData1),
     .BRegisterInput(readData2),
@@ -202,6 +219,18 @@ ID_EX_register p2(
     .BranchOutput(outSignEXTEX),
     .JumpOutput(NPC1EX),
     .controlSignal(1'b1)
+);
+
+assign ALUInput2 = ALUSrcEX ? outSignEXTEX : readData2EX;
+
+ALU_Module aluEX(
+    .data_in1(readData1EX),
+    .data_in2(ALUInput2),
+    .ALUOpCode(ALUCtrlEX),
+    .resultOut(ALUResult),
+    .zeroFlag(ZeroOut),
+    .lessThanFlag(),
+    .greaterThanFlag()
 );
 
 EX_MEM_register p3(
@@ -244,6 +273,14 @@ EX_MEM_register p3(
     .controlSignal(1'b1)
 );
 
+Memory dataMemory(
+    .memReadFlag(MemReadMEM),
+    .memWriteFlag(MemWriteMEM),
+    .MemAddress(ALUResultMEM),
+    .WriteDataInput(readData2MEM),
+    .ReadDataOutput(outputData)
+);
+
 MEM_WB_register p4(
     .clk(clk),
     .reset(reset),
@@ -269,7 +306,9 @@ MEM_WB_register p4(
     .BOutput(outputDataWB),
     .ResultOutput(ALUResultWB),
     .regDestAddressOutput(writeRegWireWB),
-    .controlSignal(1'b1)
+    .controlSignal(1'b1),
+    .memReadFlagInput(MemReadMEM),
+    .memWriteFlagInput(MemWriteMEM)
 );
 
 endmodule
